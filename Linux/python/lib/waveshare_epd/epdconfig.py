@@ -32,6 +32,8 @@ import logging
 import sys
 import time
 
+UNUSED = "__used__"
+
 
 class RaspberryPi:
     # Pin definition
@@ -142,10 +144,72 @@ class JetsonNano:
         self.GPIO.cleanup()
 
 
+class BeagleBoneBlack:
+    # Pin definition
+    RST_PIN         = "GPIO1_16"
+    DC_PIN          = "GPIO0_7"
+    CS_PIN          = UNUSED
+    BUSY_PIN        = "GPIO1_28"
+
+    def __init__(self):
+        import spidev
+        import Adafruit_BBIO.GPIO as GPIO
+
+        self.GPIO = GPIO
+
+        # SPI device, bus = 1, device = 0
+        self.SPI = spidev.SpiDev(1, 0)
+
+    def digital_write(self, pin, value):
+        if pin != UNUSED:
+            self.GPIO.output(pin, value)
+
+    def digital_read(self, pin):
+        return self.GPIO.input(pin)
+
+    def delay_ms(self, delaytime):
+        time.sleep(delaytime / 1000.0)
+
+    def spi_writebyte(self, data):
+        self.SPI.writebytes(data)
+
+    def module_init(self):
+        #self.GPIO.setmode(self.GPIO.BCM)
+        #self.GPIO.setwarnings(False)
+        self.GPIO.setup(self.RST_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.DC_PIN, self.GPIO.OUT)
+        if self.CS_PIN != UNUSED:
+            self.GPIO.setup(self.CS_PIN, self.GPIO.OUT)
+        self.GPIO.setup(self.BUSY_PIN, self.GPIO.IN)
+        self.SPI.max_speed_hz = 4000000
+        self.SPI.mode = 0b00
+        return 0
+
+    def module_exit(self):
+        logging.debug("spi end")
+        self.SPI.close()
+
+        logging.debug("close 5V, Module enters 0 power consumption ...")
+        self.GPIO.output(self.RST_PIN, 0)
+        self.GPIO.output(self.DC_PIN, 0)
+
+        self.GPIO.cleanup()
+
+
 if os.path.exists('/sys/bus/platform/drivers/gpiomem-bcm2835'):
     implementation = RaspberryPi()
 else:
-    implementation = JetsonNano()
+    import re
+    try:
+        fo = open("/proc/device-tree/model", "r")
+    except:
+        implementation = JetsonNano()
+    else:
+        if re.search("BeagleBone Black", fo.readline()):
+            implementation = BeagleBoneBlack()
+        else:
+            implementation = JetsonNano()
+        fo.close()
 
 for func in [x for x in dir(implementation) if not x.startswith('_')]:
     setattr(sys.modules[__name__], func, getattr(implementation, func))
